@@ -1,0 +1,295 @@
+---
+date: "`r format(Sys.time(), '%d/%m/%Y')`"
+output: 
+    html_document:
+      highlight: textmate
+      logo: logo.png
+      theme: jou
+      number_sections: yes
+      toc: yes
+      toc_float:
+        collapsed: yes
+        smooth_scroll: no
+      df_print: paged
+      code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# 1. Import
+
+```{r}
+library(tidyverse)
+library(readr)
+library(janitor)
+library(gtsummary)
+library(summarytools)
+library(kableExtra)
+library(gridExtra)
+library(ggplot2)
+library(ggpubr)
+```
+
+# 2. Data Collection
+
+```{r}
+df <- read_csv("datasets/train.csv")
+
+# glimpse(df) # abre uma mini visão da tabela
+#View(df) # abre uma visão da tabela em uma janela
+```
+
+# 3. Data Cleaning
+
+```{r}
+# "limpa" os nomes das colunas da tabela
+df1 <- janitor::clean_names(df)
+
+# printa os nomes das colunas
+# df1 %>% names()  
+```
+
+## 3.1 Data Types
+
+```{r}
+# Para verificar os tipos dos dados
+#str(df1) 
+```
+
+```{r}
+# construção de uma tabela com os nomes das variáveis e os tipos
+tibble(variables = names(df1),
+       types = unlist(lapply(df1, class)))
+```
+
+## 3.2 Renomeações
+
+Aqui faremos algumas recomeações de nomes de colunas e de alguns valores.
+
+```{r}
+# rename: renomea os nomes das colunas
+# mutate: aplica uma função dentro das colunas
+# mutate_if: para transformar as variaveis categoricas em factor (precisa para o modelo)
+df2 <- df1 %>% 
+  rename(days_associated = vintage,
+        health_annual_paid  = annual_premium) %>% 
+  mutate(
+    across(where(is.character), tolower),
+    driving_lincense = ifelse(driving_license == 1, "yes", "no"),
+    previously_insured = ifelse(previously_insured == 1, "yes", "no"),
+    response = ifelse(response == 1, "yes", "no"),
+    vehicle_age = case_when(
+      vehicle_age == "< 1 year" ~ "below_1_year",
+      vehicle_age == "1-2 year" ~ "between_1_2_years",
+      vehicle_age == "> 2 years" ~ "over_2_years"
+    )) %>%
+  mutate_if(is.character, as.factor)
+```
+
+```{r}
+glimpse(df2)
+```
+
+```{r}
+# Para o modelo é necessário que a variável positiva seja a primeira. Para isso, vamos garantir a ordem.
+
+# Comando para verificar a ordem da variável resposta
+df2$response %>% levels()
+
+# Comando para garantir que "yes" apareça antes de "no"
+# Opção 1
+# df2$response <- factor(df2$response, levels = c("yes", "no"))
+
+# Opção 2  
+df2 <- df2 %>% 
+   mutate(response = factor(response, levels = c("yes", "no")),
+          driving_license = factor(driving_license, level = c(1, 0)),
+          previously_insured = factor(previously_insured, levels = c("yes", "no")),
+          vehicle_damage = factor(vehicle_damage, levels = c("yes", "no")))
+```
+
+```{r}
+# Salvar df2 como RDS, para que não próxima vez que abrirmos o porjeto não seja necessário rodar tudo.
+saveRDS(df2, "df_cleaned.rds")
+```
+
+## 3.3 Descrição das Colunas
+
+## 3.4 Estatística Descritiva
+
+```{r}
+# Ler os dados que foram salvos anteriormente em RDS
+df_cleaned <- readRDS('df_cleaned.rds')
+# glimpse(df_cleaned)
+```
+
+```{r}
+# Estatística Descritiva
+skimr::skim(df_cleaned)
+```
+
+```{r}
+# resumo de descrição de cada atributo
+# select: seleciona todos os atributos, menos o id
+# tbl_summary: cria a tabela com resumos das estatísticas dos atributos
+df_cleaned %>% 
+  select(-id) %>% # seleciona todos os atributos, menos o id
+  tbl_summary(
+    type = list(response ~ "categorical",
+                driving_license ~ "categorical",
+                previously_insured ~ "categorical",
+                vehicle_damage ~ "categorical"),
+    digits = list(all_categorical() ~ c(0,2))
+      )
+```
+
+Essas estatísticas são muito uteis para se ter um breve overview dos dados, mas precisamos ir um pouco mais além. Para isso, vamos construir uma visão mais detalhada para os dados numéricos.
+
+```{r}
+num_attributes <- df_cleaned %>% 
+  select(age, health_annual_paid, days_associated)
+```
+
+```{r}
+descritive_table <- descr(num_attributes, style = 'rmarkdown') %>% 
+                          round(2)
+
+kable(data.frame(descritive_table), format='html') %>% 
+  kable_styling(bootstrap_options = 'striped',
+                full_width = FALSE)
+```
+
+Vamos criar uma visualização gráfica.
+
+```{r}
+# Age
+age_plt <- num_attributes %>% 
+  ggplot(aes(x = age)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 2,
+                 color = "black", fill = "lightgreen", alpha = 0.5)  + 
+  geom_density(color = 'black', size = 1) + 
+  labs(x = "Age", y = "Density", title = "Customers Age Distribution")  + 
+  theme_minimal()
+
+# Days Associated
+days_plt <- num_attributes %>% 
+  ggplot(aes(x = days_associated)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 10,
+                 color = "black", fill = "lightgreen", alpha = 0.5)  + 
+  geom_density(color = 'black', size = 1) + 
+  labs(x = "Days Associated", y = "Density", title = "Customers Days Associated Distribution")  + 
+  theme_minimal()
+
+# Health Annual paid
+paid_plt <- num_attributes %>% 
+  ggplot(aes(x = health_annual_paid)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 10000,
+                 color = "black", fill = "lightgreen", alpha = 0.5)  + 
+  geom_density(color = 'black', size = 1) + 
+  labs(x = "Health Annual Age", y = "Density", title = "Customers Health Annual Paid Distribution")  + 
+  theme_minimal()
+
+# Grid
+grid.arrange(age_plt, days_plt, paid_plt)
+```
+
+Agora, vamos analisar as variáveis categóricas.
+
+```{r}
+num_names <- names(num_attributes)
+cat_attributes <- df_cleaned %>% 
+  select(-id, -one_of(num_names))
+```
+
+```{r}
+# Gender
+gender_plt <- cat_attributes %>% 
+  ggplot(aes(x = gender)) +
+  geom_bar(aes(fill = gender), color = 'black') + 
+  labs(x = "Gender", y = "Count", title = "Customers Gender")  + 
+    scale_fill_manual(values=c("lightgreen",
+                               "darkgreen"), name = 'Region Code') +
+  theme_minimal()
+
+# Driving License
+driving_plt <- cat_attributes %>% 
+  ggplot(aes(x = driving_license)) +
+  geom_bar(aes(fill = driving_license), color = 'black') + 
+  labs(x = "Driving License", y = "Count", title = "Customers Driving License")  + 
+    scale_fill_manual(values=c("lightgreen",
+                               "darkgreen"), name = 'Region Code') +
+  theme_minimal()
+
+# Region Code
+region_plt <- cat_attributes %>% 
+  ggplot(aes(x = factor(region_code))) +
+  geom_bar(aes(fill = region_code), color = 'black') + 
+  labs(x = "Region Code", y = "Count", title = "Customers Region Code")  + 
+  scale_fill_gradient(low='lightgreen', high='darkgreen', name = 'Region Code') +
+  theme_minimal()
+
+# Previously Insured
+insured_plt <- cat_attributes %>% 
+  ggplot(aes(x = previously_insured)) +
+  geom_bar(aes(fill = previously_insured), color = 'black') + 
+  labs(x = "Previously Insured", y = "Count", title = "Customers Previously Insured")  + 
+    scale_fill_manual(values=c("lightgreen",
+                               "darkgreen"), name="Previously Insured") +
+  theme_minimal()
+
+# Vehicle Age
+vehicle_age_plt <- cat_attributes %>% 
+  ggplot(aes(x = vehicle_age)) +
+  geom_bar(aes(fill = vehicle_age), color = 'black') + 
+  labs(x = "Vehicle Age", y = "Count", title = "Customers Vehicle Age")  +
+  scale_fill_manual(values=c("lightgreen",
+                             "#71C55B",
+                             "darkgreen"), name="Vehicle Age") +
+  theme_minimal()
+
+# Vehicle Damage
+vehicle_dmg_plt <- cat_attributes %>% 
+  ggplot(aes(x = vehicle_damage)) +
+  geom_bar(aes(fill = vehicle_damage), color = 'black') + 
+  labs(x = "Vehicle Damage", y = "Count", title = "Customers Vehicle Damage")  + 
+    scale_fill_manual(values=c("lightgreen",
+                               "darkgreen"), name="Vehicle Damage") +
+  theme_minimal()
+
+# Policy Sales Channel
+sales_channel_plt <- cat_attributes %>% 
+  ggplot(aes(x = factor(policy_sales_channel))) +
+  geom_bar(aes(fill = policy_sales_channel), color = 'black') + 
+  labs(x = "Policy Sales Channel", y = "Count", title = "Customers Policy Sales Channel")  + 
+  scale_fill_gradient(low='lightgreen', high='darkgreen', name = 'Policy Sales Channel') +
+  theme_minimal()
+
+# Response
+response_plt <- cat_attributes %>% 
+  ggplot(aes(x = response)) +
+  geom_bar(aes(fill = response), color = 'black') + 
+  labs(x = "Response", y = "Count", title = "Customers Response")  + 
+    scale_fill_manual(values=c("lightgreen",
+                               "darkgreen"), name="Response") +
+  theme_minimal()
+
+# Grid
+graficos_combinados <- ggarrange(gender_plt,
+                                 driving_plt,
+                                 region_plt,
+                                 insured_plt,
+                                 vehicle_age_plt,
+                                 vehicle_dmg_plt,
+                                 sales_channel_plt,
+                                 response_plt,
+                                 ncol = 2, nrow = 4);
+```
+
+```{r}
+# Salvar os gráficos em Alta Definição
+tiff(filename = "estudo.tiff", width = 3500, height = 3500, res = 300)
+graficos_combinados
+dev.off()
+```
